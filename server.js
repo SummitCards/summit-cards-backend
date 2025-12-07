@@ -1,6 +1,5 @@
 const express = require('express');
 const cors = require('cors');
-const fetch = require('node-fetch');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -9,7 +8,6 @@ const PORT = process.env.PORT || 3001;
 const POKEMON_TCG_API = 'https://api.pokemontcg.io/v2';
 
 // Optional: Add your Pokemon TCG API key for higher rate limits
-// Get one free at https://dev.pokemontcg.io/
 const API_KEY = process.env.POKEMON_TCG_API_KEY || '';
 
 // CORS configuration - allow your frontend domains
@@ -24,9 +22,7 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (mobile apps, curl, etc.)
     if (!origin) return callback(null, true);
-    
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
@@ -45,7 +41,7 @@ app.get('/', (req, res) => {
   res.json({
     status: 'ok',
     service: 'Summit Cards Pokemon TCG API Proxy',
-    version: '1.0.0',
+    version: '1.1.0',
     endpoints: {
       sets: '/api/sets',
       cards: '/api/cards',
@@ -66,21 +62,39 @@ async function pokemonApiRequest(endpoint, queryParams = '') {
   console.log(`Fetching: ${url}`);
   
   const headers = {
-    'Content-Type': 'application/json'
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
   };
   
-  // Add API key if available (increases rate limit from 1000 to 20000 requests/day)
   if (API_KEY) {
     headers['X-Api-Key'] = API_KEY;
   }
   
-  const response = await fetch(url, { headers });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000); // 30 second timeout
   
-  if (!response.ok) {
-    throw new Error(`Pokemon TCG API error: ${response.status} ${response.statusText}`);
+  try {
+    const response = await fetch(url, { 
+      headers,
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeout);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`API error response: ${errorText}`);
+      throw new Error(`Pokemon TCG API error: ${response.status} ${response.statusText}`);
+    }
+    
+    return response.json();
+  } catch (err) {
+    clearTimeout(timeout);
+    if (err.name === 'AbortError') {
+      throw new Error('Request timeout - Pokemon TCG API took too long to respond');
+    }
+    throw err;
   }
-  
-  return response.json();
 }
 
 // GET /api/sets - Get all sets
@@ -131,6 +145,6 @@ app.get('/api/cards/:id', async (req, res) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`Summit Cards Backend v1.0.0 running on port ${PORT}`);
+  console.log(`Summit Cards Backend v1.1.0 running on port ${PORT}`);
   console.log(`API Key configured: ${API_KEY ? 'Yes' : 'No (using default rate limits)'}`);
 });
